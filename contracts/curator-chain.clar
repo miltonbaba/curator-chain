@@ -342,3 +342,126 @@
     (ok true)
   )
 )
+
+;; READ-ONLY QUERY INTERFACE
+
+;; Retrieve complete metadata for any content item
+(define-read-only (retrieve-item-details (item-identifier uint))
+  (map-get? curated-items { item-identifier: item-identifier })
+)
+
+;; Check specific user's vote on particular content
+(define-read-only (retrieve-participant-appraisal
+    (participant principal)
+    (item-identifier uint)
+  )
+  (get appraisal
+    (map-get? participant-appraisals {
+      participant: participant,
+      item-identifier: item-identifier,
+    })
+  )
+)
+
+;; Get current total content submissions in the system
+(define-read-only (retrieve-aggregate-submissions)
+  (var-get aggregate-submissions)
+)
+
+;; Access user's cumulative reputation score
+(define-read-only (retrieve-participant-credibility (participant principal))
+  (default-to { metric: 0 }
+    (map-get? participant-credibility { participant: participant })
+  )
+)
+
+;; Generate list of valid item identifiers for batch operations
+(define-read-only (get-item-ids (count uint))
+  (filter is-non-zero (enumerate count))
+)
+
+;; Retrieve highest-quality content ranked by community approval
+(define-read-only (retrieve-top-items (limit uint))
+  (let (
+      (item-count (var-get aggregate-submissions))
+      (actual-limit (if (> limit item-count)
+        item-count
+        limit
+      ))
+    )
+    (filter not-none (map retrieve-item-if-valid (get-item-ids actual-limit)))
+  )
+)
+
+;; ADMINISTRATIVE GOVERNANCE FUNCTIONS
+
+;; Protocol fee adjustment for economic balance
+(define-public (adjust-submission-charge (new-charge uint))
+  (begin
+    ;; Restrict to protocol administrator only
+    (asserts! (is-eq tx-sender PROTOCOL_ADMINISTRATOR) ERR_UNAUTHORIZED_ACCESS)
+
+    ;; Prevent overflow in fee calculation
+    (asserts! (<= new-charge MAX_UINT) ERR_OVERFLOW)
+
+    ;; Update submission fee
+    (var-set submission-charge new-charge)
+
+    ;; Log governance action
+    (print {
+      type: "fee-change",
+      new-charge: new-charge,
+    })
+
+    (ok true)
+  )
+)
+
+;; Emergency content removal for policy violations
+(define-public (expunge-item (item-identifier uint))
+  (begin
+    ;; Restrict to protocol administrator only
+    (asserts! (is-eq tx-sender PROTOCOL_ADMINISTRATOR) ERR_UNAUTHORIZED_ACCESS)
+
+    ;; Verify target exists before deletion
+    (asserts! (item-exists item-identifier) ERR_NONEXISTENT_ITEM)
+
+    ;; Remove content from registry
+    (map-delete curated-items { item-identifier: item-identifier })
+
+    ;; Log moderation action
+    (print {
+      type: "item-expunged",
+      item-identifier: item-identifier,
+    })
+
+    (ok true)
+  )
+)
+
+;; Expand content categorization system
+(define-public (introduce-topic (new-topic (string-ascii 20)))
+  (begin
+    ;; Restrict to protocol administrator only  
+    (asserts! (is-eq tx-sender PROTOCOL_ADMINISTRATOR) ERR_UNAUTHORIZED_ACCESS)
+
+    ;; Enforce maximum topic limit
+    (asserts! (< (len (var-get content-topics)) u10) ERR_INVALID_TOPIC)
+
+    ;; Validate topic name length
+    (asserts! (>= (len new-topic) u1) ERR_INVALID_TOPIC)
+
+    ;; Add new topic to approved categories
+    (var-set content-topics
+      (unwrap-panic (as-max-len? (append (var-get content-topics) new-topic) u10))
+    )
+
+    ;; Log system expansion
+    (print {
+      type: "new-topic",
+      topic: new-topic,
+    })
+
+    (ok true)
+  )
+)
