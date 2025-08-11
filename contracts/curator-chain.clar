@@ -95,3 +95,131 @@
 })))
   (is-some item)
 )
+
+;; Quality gate: only return items with positive community sentiment
+(define-private (retrieve-item-if-valid (id uint))
+  (match (map-get? curated-items { item-identifier: id })
+    item (if (>= (get appraisals item) 0)
+      (some item)
+      none
+    )
+    none
+  )
+)
+
+;; Generate bounded sequential ID list for batch operations
+(define-private (enumerate (n uint))
+  (let ((limit (if (> n u10)
+      u10
+      n
+    )))
+    (list
+      (if (>= limit u1)
+        u1
+        u0
+      )
+      (if (>= limit u2)
+        u2
+        u0
+      )
+      (if (>= limit u3)
+        u3
+        u0
+      )
+      (if (>= limit u4)
+        u4
+        u0
+      )
+      (if (>= limit u5)
+        u5
+        u0
+      )
+      (if (>= limit u6)
+        u6
+        u0
+      )
+      (if (>= limit u7)
+        u7
+        u0
+      )
+      (if (>= limit u8)
+        u8
+        u0
+      )
+      (if (>= limit u9)
+        u9
+        u0
+      )
+      (if (>= limit u10)
+        u10
+        u0
+      )
+    )
+  )
+)
+
+;; Utility to filter zero values from enumerated lists
+(define-private (is-non-zero (n uint))
+  (not (is-eq n u0))
+)
+
+;; PUBLIC CONTENT CURATION INTERFACE
+
+;; Submit valuable content for community evaluation and potential rewards
+(define-public (contribute-item
+    (headline (string-ascii 100))
+    (hyperlink (string-ascii 200))
+    (topic (string-ascii 20))
+  )
+  (let ((item-identifier (+ (var-get aggregate-submissions) u1)))
+    ;; Validate content submission requirements
+    (asserts!
+      (and
+        (>= (len headline) u1)
+        (>= (len hyperlink) MIN_HYPERLINK_LENGTH)
+        (>= (len topic) u1)
+      )
+      ERR_INVALID_SUBMISSION
+    )
+
+    ;; Prevent overflow in item counting
+    (asserts! (> item-identifier (var-get aggregate-submissions)) ERR_OVERFLOW)
+
+    ;; Ensure topic exists in approved categories
+    (asserts! (is-some (index-of (var-get content-topics) topic))
+      ERR_INVALID_TOPIC
+    )
+
+    ;; Verify submitter can pay submission fee
+    (asserts! (>= (stx-get-balance tx-sender) (var-get submission-charge))
+      ERR_INADEQUATE_BALANCE
+    )
+
+    ;; Process submission fee payment
+    (try! (stx-transfer? (var-get submission-charge) tx-sender PROTOCOL_ADMINISTRATOR))
+
+    ;; Register new content item in the system
+    (map-set curated-items { item-identifier: item-identifier } {
+      originator: tx-sender,
+      headline: headline,
+      hyperlink: hyperlink,
+      topic: topic,
+      publication-epoch: stacks-block-height,
+      appraisals: 0,
+      gratuities: u0,
+      flags: u0,
+    })
+
+    ;; Update global submission counter
+    (var-set aggregate-submissions item-identifier)
+
+    ;; Emit creation event for indexing
+    (print {
+      type: "new-item",
+      item-identifier: item-identifier,
+      originator: tx-sender,
+    })
+
+    (ok item-identifier)
+  )
+)
