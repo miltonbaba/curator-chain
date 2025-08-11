@@ -223,3 +223,122 @@
     (ok item-identifier)
   )
 )
+
+;; Community voting mechanism with reputation consequences
+(define-public (appraise-item
+    (item-identifier uint)
+    (appraisal int)
+  )
+  (let (
+      (previous-appraisal (default-to 0
+        (get appraisal
+          (map-get? participant-appraisals {
+            participant: tx-sender,
+            item-identifier: item-identifier,
+          })
+        )))
+      (target-item (unwrap! (map-get? curated-items { item-identifier: item-identifier })
+        ERR_NONEXISTENT_ITEM
+      ))
+      (appraiser-standing (default-to { metric: 0 }
+        (map-get? participant-credibility { participant: tx-sender })
+      ))
+    )
+    ;; Verify target content exists
+    (asserts! (item-exists item-identifier) ERR_NONEXISTENT_ITEM)
+
+    ;; Enforce binary voting system (upvote/downvote only)
+    (asserts! (or (is-eq appraisal 1) (is-eq appraisal -1)) ERR_INVALID_APPRAISAL)
+
+    ;; Record user's vote on this specific item
+    (map-set participant-appraisals {
+      participant: tx-sender,
+      item-identifier: item-identifier,
+    } { appraisal: appraisal }
+    )
+
+    ;; Update item's aggregate community sentiment
+    (map-set curated-items { item-identifier: item-identifier }
+      (merge target-item { appraisals: (+ (get appraisals target-item) (- appraisal previous-appraisal)) })
+    )
+
+    ;; Adjust voter's reputation based on participation
+    (map-set participant-credibility { participant: tx-sender } { metric: (+ (get metric appraiser-standing) appraisal) })
+
+    ;; Log voting activity for transparency
+    (print {
+      type: "appraisal",
+      item-identifier: item-identifier,
+      appraiser: tx-sender,
+      appraisal: appraisal,
+    })
+
+    (ok true)
+  )
+)
+
+;; Direct monetary appreciation system for exceptional content
+(define-public (reward-originator
+    (item-identifier uint)
+    (gratuity-amount uint)
+  )
+  (let ((target-item (unwrap! (map-get? curated-items { item-identifier: item-identifier })
+      ERR_NONEXISTENT_ITEM
+    )))
+    ;; Validate reward target exists
+    (asserts! (item-exists item-identifier) ERR_NONEXISTENT_ITEM)
+
+    ;; Confirm sender has sufficient funds
+    (asserts! (>= (stx-get-balance tx-sender) gratuity-amount)
+      ERR_INADEQUATE_BALANCE
+    )
+
+    ;; Update reward tracking before transfer
+    (map-set curated-items { item-identifier: item-identifier }
+      (merge target-item { gratuities: (+ (get gratuities target-item) gratuity-amount) })
+    )
+
+    ;; Execute STX transfer to content creator
+    (try! (stx-transfer? gratuity-amount tx-sender (get originator target-item)))
+
+    ;; Log reward transaction
+    (print {
+      type: "reward",
+      item-identifier: item-identifier,
+      from: tx-sender,
+      to: (get originator target-item),
+      amount: gratuity-amount,
+    })
+
+    (ok true)
+  )
+)
+
+;; Community-driven content quality control mechanism
+(define-public (flag-item (item-identifier uint))
+  (let ((target-item (unwrap! (map-get? curated-items { item-identifier: item-identifier })
+      ERR_NONEXISTENT_ITEM
+    )))
+    ;; Validate flagging target exists
+    (asserts! (item-exists item-identifier) ERR_NONEXISTENT_ITEM)
+
+    ;; Prevent self-flagging to avoid gaming
+    (asserts! (not (is-eq (get originator target-item) tx-sender))
+      ERR_INVALID_FLAG
+    )
+
+    ;; Increment flag counter for moderation tracking
+    (map-set curated-items { item-identifier: item-identifier }
+      (merge target-item { flags: (+ (get flags target-item) u1) })
+    )
+
+    ;; Record flagging event for transparency
+    (print {
+      type: "flag",
+      item-identifier: item-identifier,
+      flagger: tx-sender,
+    })
+
+    (ok true)
+  )
+)
